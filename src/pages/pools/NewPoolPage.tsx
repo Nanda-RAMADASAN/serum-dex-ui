@@ -13,7 +13,7 @@ import { useConnection } from '../../utils/connection';
 import FloatingElement from '../../components/layout/FloatingElement';
 import styled from 'styled-components';
 import { useWallet } from '../../utils/wallet';
-import { sendSignedTransaction, signTransaction } from '../../utils/send';
+import { sendSignedTransaction, signTransactions } from '../../utils/send';
 import { useMintInput } from '../../components/useMintInput';
 import { PoolTransactions } from '@project-serum/pool';
 import { useTokenAccounts } from '../../utils/markets';
@@ -36,9 +36,9 @@ const AddRemoveTokenButtons = styled.div`
   margin-bottom: 16px;
 `;
 
-const SIMPLE_POOL_PROGRAM_ID = 'AuQRLHwApDLinkrAZCkGqQ9TB7bH7KhpfCHtm6iYNHUz';
+const SIMPLE_POOL_PROGRAM_ID = '71JS8f7y7ASMbuuSMCVG7a3qDdcVco2qYD6bMJeZqUCm';
 const ADMIN_CONTROLLED_POOL_PROGRAM_ID =
-  '4RtoceJET4bF5mWXCp2iaZmssEPS7Z43XRaYEyA8TCkB';
+  'WvmTNLpGMVbwJVYztYL4Hnsy82cJhQorxjnnXcRm3b6';
 const DEFAULT_PROGRAM_ID = ADMIN_CONTROLLED_POOL_PROGRAM_ID;
 const PROGRAM_ID_OPTIONS = [
   {
@@ -62,6 +62,7 @@ export default function NewPoolPage() {
     { valid: false },
   ]);
   const [adminControlled, setAdminControlled] = useState(false);
+  const [adminAddress, setAdminAddress] = useState('');
   const [tokenAccounts] = useTokenAccounts();
   const [submitting, setSubmitting] = useState(false);
   const [newPoolAddress, setNewPoolAddress] = useState<PublicKey | null>(null);
@@ -74,13 +75,20 @@ export default function NewPoolPage() {
     }
   }, [programId]);
 
+  useEffect(() => {
+    if (connected) {
+      setAdminAddress(wallet.publicKey.toBase58());
+    }
+  }, [wallet, connected]);
+
   const canSubmit =
     connected &&
     poolName.trim() &&
     programId &&
     parseFloat(initialSupply) > 0 &&
     initialAssets.every((asset) => asset.valid) &&
-    tokenAccounts;
+    tokenAccounts &&
+    (adminAddress || !adminControlled);
 
   async function onSubmit() {
     if (!canSubmit) {
@@ -91,7 +99,7 @@ export default function NewPoolPage() {
       const assets = initialAssets as ValidInitialAsset[];
       const [
         poolAddress,
-        transactions,
+        transactionsAndSigners,
       ] = await PoolTransactions.initializeSimplePool({
         connection,
         programId: new PublicKey(programId),
@@ -114,14 +122,20 @@ export default function NewPoolPage() {
           return found.pubkey;
         }),
         additionalAccounts: adminControlled
-          ? [{ pubkey: wallet.publicKey, isSigner: false, isWritable: false }]
+          ? [
+              {
+                pubkey: new PublicKey(adminAddress),
+                isSigner: false,
+                isWritable: false,
+              },
+            ]
           : [],
       });
-      const signed = await Promise.all(
-        transactions.map(({ transaction, signers }) =>
-          signTransaction({ transaction, wallet, signers, connection }),
-        ),
-      );
+      const signed = await signTransactions({
+        transactionsAndSigners,
+        wallet,
+        connection,
+      });
       for (let signedTransaction of signed) {
         await sendSignedTransaction({ signedTransaction, connection });
       }
@@ -224,6 +238,20 @@ export default function NewPoolPage() {
               }
             />
           </Form.Item>
+          {adminControlled ? (
+            <Form.Item
+              label={
+                <Tooltip title="Address of the pool admin account.">
+                  Admin Address
+                </Tooltip>
+              }
+            >
+              <Input
+                value={adminAddress}
+                onChange={(e) => setAdminAddress(e.target.value.trim())}
+              />
+            </Form.Item>
+          ) : null}
           <Form.Item label=" " colon={false}>
             <Button
               type="primary"
